@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "lib/",
+    "codegen/",
+    "example/",
+  ]
+default-members = ["lib/"]

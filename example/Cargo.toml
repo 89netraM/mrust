@@ -1,0 +1,8 @@
+[package]
+name = "mrust_example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.mrust]
+version = "0.1.0"
+path = "../lib"
