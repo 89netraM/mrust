@@ -7,20 +7,18 @@ fn main() {
 	println!("Failing test:\t{failure:?}");
 }
 
+#[monadic]
 fn returning_test() -> Option<i32> {
-	do_notation!{
-		let a <- some_thing();
-		let b = 2;
-		ret(a + b)
-	}
+	let a = some_thing()?;
+	let b = 2;
+	ret(a + b)
 }
 
+#[monadic]
 fn failing_test() -> Option<i32> {
-	do_notation!{
-		let a <- some_thing();
-		let b <- no_thing();
-		ret(a + b)
-	}
+	let a = some_thing()?;
+	let b = no_thing()?;
+	ret(a + b)
 }
 
 fn some_thing() -> Option<i32> {

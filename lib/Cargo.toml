@@ -1,6 +1,6 @@
 [package]
 name = "mrust"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Mårten Åsberg <marten.asberg@outlook.com>"]
 description = "Monads for Rust"
 repository = "https://github.com/89netraM/mrust"
@@ -12,5 +12,5 @@ edition = "2021"
 [lib]
 
 [dependencies.mrust_codegen]
-version = "0.1.0"
+version = "0.2.0"
 path = "../codegen"
