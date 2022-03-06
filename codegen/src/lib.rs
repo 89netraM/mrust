@@ -1,186 +1,155 @@
-#![feature(proc_macro_span)]
-#![feature(proc_macro_span_shrink)]
+#![feature(extend_one)]
 
-use proc_macro::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
-use std::iter::FromIterator;
-use syn::Error;
+use proc_macro::TokenStream as TokenStream1;
+use proc_macro2::TokenStream;
+use quote::{quote, quote_spanned, ToTokens};
+use std::iter::Iterator;
+use syn::{fold::{Fold, fold_expr}, parse::Nothing, parse_macro_input, Error, Expr, ItemFn, Local, Stmt};
 
-/// A macro that allows for the use of the `?` operator on monad assignments to
+/// A macro that allows for the use of the `?` operator on monad values to
 /// emulate bind.
 #[proc_macro_attribute]
-pub fn monadic(attr: TokenStream, item: TokenStream) -> TokenStream {
-	if let Some(attr_span) = attr
-		.into_iter()
-		.map(|tt| tt.span())
-		.reduce(|a, e| a.join(e).unwrap())
-	{
-		return Error::new(attr_span.into(), "monadic takes no attribute arguments")
-			.into_compile_error()
-			.into();
-	}
+pub fn monadic(attr: TokenStream1, item: TokenStream1) -> TokenStream1 {
+	parse_macro_input!(attr as Nothing);
 
-	let mut out_item = TokenStream::new();
-	for tt in item {
-		let out_tt = match tt {
-			TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
-				let mut in_body = g.stream().into_iter();
-				TokenTree::Group(Group::new(Delimiter::Brace, monadic_parser(&mut in_body)))
-			}
-			_ => tt,
-		};
-		out_item.extend(TokenStream::from(out_tt));
-	}
-	out_item
+	let function = parse_macro_input!(item as ItemFn);
+	let mut in_stmts = function.block.stmts.into_iter();
+	let out_stmts = monadic_parse(&mut in_stmts);
+
+	let attrs = TokenStream::from_iter(function.attrs.iter().map(|a| a.to_token_stream()));
+	let vis = function.vis.to_token_stream();
+	let sig = function.sig.to_token_stream();
+
+	quote! {
+		#attrs
+		#vis #sig {
+			#out_stmts
+		}
+	}.into()
 }
 
-fn monadic_parser<I: Iterator<Item = TokenTree>>(in_body: &mut I) -> TokenStream {
-	let mut out_body = TokenStream::new();
-	while let Some(tt) = in_body.next() {
-		let out_tt = match tt {
-			TokenTree::Ident(i) if i.to_string() == "let" => translate_bind(in_body),
-			TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
-				return Error::new(g.span().into(), "blocks cannot be used in monadic")
-					.into_compile_error()
-					.into()
-			}
-			TokenTree::Punct(p) if p.as_char() == '?' => return misplaced_question_mark(p.span()),
-			_ => TokenStream::from(tt),
-		};
-		out_body.extend(out_tt);
-	}
-	out_body
-}
-
-fn translate_bind<I: Iterator<Item = TokenTree>>(in_body: &mut I) -> TokenStream {
-	let (is_mut, ident) = match in_body.next() {
-		Some(TokenTree::Ident(i)) => {
-			if i.to_string() == "mut" {
-				(
-					true,
-					match in_body.next() {
-						Some(TokenTree::Ident(i)) => i,
-						Some(tt) => {
-							let mut out = output_let();
-							out.extend(TokenStream::from(TokenTree::Ident(i)));
-							out.extend(TokenStream::from(tt));
-							return out;
+fn monadic_parse<I: Iterator<Item = Stmt>>(input: &mut I) -> TokenStream {
+	let mut out_stmts = TokenStream::new();
+	while let Some(stmt) = input.next() {
+		match stmt {
+			Stmt::Local(local) => {
+				if let Some((eq, boxed_expr)) = local.init {
+					match *boxed_expr {
+						Expr::Try(try_expr) => {
+							let expr = monadic_expr_parser(*try_expr.expr);
+							let pat = local.pat;
+							let rest = monadic_parse(input);
+							if rest.is_empty() {
+								expr.to_tokens(&mut out_stmts);
+							}
+							else {
+								out_stmts.extend(quote! {
+									(#expr).bind(|#pat| {
+										#rest
+									})
+								});
+							}
 						}
-						None => {
-							let mut out = output_let();
-							out.extend(TokenStream::from(TokenTree::Ident(i)));
-							return out;
-						}
-					},
-				)
-			} else {
-				(false, i)
-			}
-		}
-		Some(tt) => {
-			let mut out = output_let();
-			out.extend(TokenStream::from(tt));
-			return out;
-		}
-		None => return output_let(),
-	};
-
-	match in_body.next() {
-		Some(TokenTree::Punct(p)) => {
-			if p.as_char() != '=' {
-				let mut out = output_assign(is_mut, ident);
-				out.extend(TokenStream::from(TokenTree::Punct(p)));
-				return out;
-			}
-		}
-		Some(tt) => {
-			let mut out = output_assign(is_mut, ident);
-			out.extend(TokenStream::from(tt));
-			return out;
-		}
-		None => return output_assign(is_mut, ident),
-	};
-
-	let mut question_span = Span::call_site();
-	let mut expr_tts = Vec::new();
-	while let Some(tt) = in_body.next() {
-		match tt {
-			TokenTree::Punct(p) if p.as_char() == '?' => match in_body.next() {
-				Some(TokenTree::Punct(p)) if p.as_char() == ';' => {
-					question_span = p.span();
-					break;
+						_ => (Local {
+							init: Some((
+								eq,
+								Box::new(Expr::Verbatim(monadic_expr_parser(*boxed_expr))),
+							)),
+							..local
+						})
+						.to_tokens(&mut out_stmts),
+					}
+				} else {
+					local.to_tokens(&mut out_stmts);
 				}
-				Some(_) => return misplaced_question_mark(p.span()),
-				None => {
-					return Error::new(
-						p.span().after().into(),
-						"unexpected end after question mark",
-					)
-					.into_compile_error()
-					.into()
+			}
+			Stmt::Semi(expr, s) => match expr {
+				Expr::Try(try_expr) => {
+					let expr = monadic_expr_parser(*try_expr.expr);
+					let rest = monadic_parse(input);
+					if rest.is_empty() {
+						expr.to_tokens(&mut out_stmts);
+					}
+					else {
+						out_stmts.extend(quote! {
+							(#expr).bind(|_| {
+								#rest
+							})
+						});
+					}
 				}
+				_ => Stmt::Semi(Expr::Verbatim(monadic_expr_parser(expr).into()), s)
+					.to_tokens(&mut out_stmts),
 			},
-			TokenTree::Punct(p) if p.as_char() == ';' => {
-				expr_tts.push(TokenTree::Punct(p));
-				let mut out = output_assign(is_mut, ident);
-				out.extend(TokenStream::from(TokenTree::Punct(Punct::new('=', Spacing::Alone))));
-				out.extend(expr_tts);
-				return out;
-			}
-			_ => expr_tts.push(tt),
+			Stmt::Expr(expr) => Stmt::Expr(Expr::Verbatim(monadic_expr_parser(expr).into()))
+				.to_tokens(&mut out_stmts),
+			_ => out_stmts.extend(stmt.to_token_stream()),
 		}
 	}
+	out_stmts
+}
 
-	let mut closure_tts = Vec::new();
-	closure_tts.push(TokenTree::Punct(Punct::new('|', Spacing::Alone)));
-	if is_mut {
-		closure_tts.push(TokenTree::Ident(Ident::new("mut", Span::call_site())));
+fn monadic_expr_parser(expr: Expr) -> TokenStream {
+	// Match with allowed expressions and preform special handling
+	match expr {
+		Expr::Block(block_expr) => {
+			let mut ts = TokenStream::new();
+			for a in block_expr.attrs {
+				a.to_tokens(&mut ts);
+			}
+			block_expr.label.to_tokens(&mut ts);
+			let block_stmts = monadic_parse(&mut block_expr.block.stmts.into_iter());
+			ts.extend(quote_spanned! {block_expr.block.brace_token.span =>
+				{
+					#block_stmts
+				}
+			});
+			ts
+		}
+		Expr::If(if_expr) => {
+			let mut ts = TokenStream::new();
+			for a in if_expr.attrs {
+				a.to_tokens(&mut ts);
+			}
+			if_expr.if_token.to_tokens(&mut ts);
+			UnsupportedReporter::fold_expr(*if_expr.cond).to_tokens(&mut ts);
+			let block_stmts = monadic_parse(&mut if_expr.then_branch.stmts.into_iter());
+			ts.extend(quote_spanned! {if_expr.then_branch.brace_token.span =>
+				{
+					#block_stmts
+				}
+			});
+			if let Some((e, expr)) = if_expr.else_branch {
+				let expr_ts = monadic_expr_parser(*expr);
+				ts.extend(quote! {
+					#e #expr_ts
+				});
+			}
+			ts
+		}
+		_ => UnsupportedReporter::fold_expr(expr).into_token_stream(),
 	}
-	closure_tts.push(TokenTree::Ident(ident));
-	closure_tts.push(TokenTree::Punct(Punct::new('|', Spacing::Alone)));
-	closure_tts.push(TokenTree::Group(Group::new(
-		Delimiter::Brace,
-		monadic_parser(in_body),
-	)));
-
-	TokenStream::from_iter([
-		TokenTree::Group(Group::new(
-			Delimiter::Parenthesis,
-			TokenStream::from_iter(expr_tts),
-		)),
-		TokenTree::Punct(Punct::new('.', Spacing::Alone)),
-		TokenTree::Ident(Ident::new("bind", question_span)),
-		TokenTree::Group(Group::new(
-			Delimiter::Parenthesis,
-			TokenStream::from_iter(closure_tts),
-		)),
-	])
 }
 
-fn output_let() -> TokenStream {
-	let mut out = TokenStream::new();
-	out.extend(TokenStream::from(TokenTree::Ident(Ident::new(
-		"let",
-		Span::call_site(),
-	))));
-	out
-}
-fn output_assign(is_mut: bool, ident: Ident) -> TokenStream {
-	let mut out = output_let();
-	if is_mut {
-		out.extend(TokenStream::from(TokenTree::Ident(Ident::new(
-			"mut",
-			Span::call_site(),
-		))));
+struct UnsupportedReporter();
+
+impl UnsupportedReporter {
+	fn fold_expr(expr: Expr) -> Expr {
+		Self {}.fold_expr(expr)
 	}
-	out.extend(TokenStream::from(TokenTree::Ident(ident)));
-	out
 }
 
-fn misplaced_question_mark(span: Span) -> TokenStream {
-	Error::new(
-		span.into(),
-		"`?` cannot be used outside assignments in monadic",
-	)
-	.into_compile_error()
-	.into()
+impl Fold for UnsupportedReporter {
+	fn fold_expr(&mut self, expr: Expr) -> Expr {
+		match expr {
+			Expr::Try(try_expr) => Expr::Verbatim(
+				Error::new_spanned(
+					try_expr.question_token,
+					"monadic bind can not be use at this point",
+				)
+				.into_compile_error(),
+			),
+			_ => fold_expr(self, expr),
+		}
+	}
 }
