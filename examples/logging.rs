@@ -1,5 +1,3 @@
-#![feature(generic_associated_types)]
-
 use mrust::*;
 
 fn main() {
@@ -64,10 +62,7 @@ impl<A> Applicative<A> for Logging<A> {
 
 	/// Creates a new `Logging` with the `value` and an empty log.
 	fn pure(value: A) -> Self {
-		Logging {
-			value,
-			log: Vec::new(),
-		}
+		Logging { value, log: Vec::new() }
 	}
 
 	/// Uses the `value` of `f` as a function for mapping the `value` of

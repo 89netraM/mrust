@@ -1,10 +1,12 @@
-#![feature(extend_one)]
-
 use proc_macro::TokenStream as TokenStream1;
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned, ToTokens};
 use std::iter::Iterator;
-use syn::{fold::{Fold, fold_expr}, parse::Nothing, parse_macro_input, Error, Expr, ItemFn, Local, Stmt};
+use syn::{
+	fold::{fold_expr, Fold},
+	parse::Nothing,
+	parse_macro_input, Error, Expr, ItemFn, Local, Stmt,
+};
 
 /// A macro that allows for the use of the `?` operator on monad values to
 /// emulate bind.
@@ -25,7 +27,8 @@ pub fn monadic(attr: TokenStream1, item: TokenStream1) -> TokenStream1 {
 		#vis #sig {
 			#out_stmts
 		}
-	}.into()
+	}
+	.into()
 }
 
 fn monadic_parse<I: Iterator<Item = Stmt>>(input: &mut I) -> TokenStream {
@@ -41,8 +44,7 @@ fn monadic_parse<I: Iterator<Item = Stmt>>(input: &mut I) -> TokenStream {
 							let rest = monadic_parse(input);
 							if rest.is_empty() {
 								expr.to_tokens(&mut out_stmts);
-							}
-							else {
+							} else {
 								out_stmts.extend(quote! {
 									(#expr).bind(|#pat| {
 										#rest
@@ -51,10 +53,7 @@ fn monadic_parse<I: Iterator<Item = Stmt>>(input: &mut I) -> TokenStream {
 							}
 						}
 						_ => (Local {
-							init: Some((
-								eq,
-								Box::new(Expr::Verbatim(monadic_expr_parser(*boxed_expr))),
-							)),
+							init: Some((eq, Box::new(Expr::Verbatim(monadic_expr_parser(*boxed_expr))))),
 							..local
 						})
 						.to_tokens(&mut out_stmts),
@@ -69,8 +68,7 @@ fn monadic_parse<I: Iterator<Item = Stmt>>(input: &mut I) -> TokenStream {
 					let rest = monadic_parse(input);
 					if rest.is_empty() {
 						expr.to_tokens(&mut out_stmts);
-					}
-					else {
+					} else {
 						out_stmts.extend(quote! {
 							(#expr).bind(|_| {
 								#rest
@@ -78,11 +76,9 @@ fn monadic_parse<I: Iterator<Item = Stmt>>(input: &mut I) -> TokenStream {
 						});
 					}
 				}
-				_ => Stmt::Semi(Expr::Verbatim(monadic_expr_parser(expr).into()), s)
-					.to_tokens(&mut out_stmts),
+				_ => Stmt::Semi(Expr::Verbatim(monadic_expr_parser(expr)), s).to_tokens(&mut out_stmts),
 			},
-			Stmt::Expr(expr) => Stmt::Expr(Expr::Verbatim(monadic_expr_parser(expr).into()))
-				.to_tokens(&mut out_stmts),
+			Stmt::Expr(expr) => Stmt::Expr(Expr::Verbatim(monadic_expr_parser(expr))).to_tokens(&mut out_stmts),
 			_ => out_stmts.extend(stmt.to_token_stream()),
 		}
 	}
@@ -143,11 +139,8 @@ impl Fold for UnsupportedReporter {
 	fn fold_expr(&mut self, expr: Expr) -> Expr {
 		match expr {
 			Expr::Try(try_expr) => Expr::Verbatim(
-				Error::new_spanned(
-					try_expr.question_token,
-					"monadic bind can not be use at this point",
-				)
-				.into_compile_error(),
+				Error::new_spanned(try_expr.question_token, "monadic bind can not be use at this point")
+					.into_compile_error(),
 			),
 			_ => fold_expr(self, expr),
 		}

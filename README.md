@@ -4,21 +4,17 @@ Monads for Rust
 
 Write and use monads like it's Haskell!
 
-## Example
+## Examples
 
-See [`example`](./example/src/main.rs) for a simple use case.
+See the [`examples`](./examples/) for a simple use case.
+
+Run the logging example with `cargo run --example logging`.
 
 ## Try it out for yourself!
-
-First, use nightly:
-
-```sh
-rustup override set nightly
-```
 
 Add this repo as a dependency:
 
 ```toml
 [dependencies]
-mrust = { git = "https://github.com/89netraM/mrust", version = "^0.1" }
+mrust = { git = "https://github.com/89netraM/mrust", version = "^0.2" }
 ```
