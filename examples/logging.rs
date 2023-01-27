@@ -12,9 +12,10 @@ fn main() {
 fn log_test(a: bool) -> Logging<i32> {
 	Logging::log("Enter function")?;
 	if a {
-		Logging::log("Branch A")?;
-	} else {
-		Logging::log("Branch B")?;
+		Logging::log("Is statement A")?;
+	}?;
+	if !a {
+		Logging::log("If statement B")?;
 	}?;
 	ret(2)
 }

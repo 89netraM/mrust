@@ -109,7 +109,10 @@ fn monadic_expr_parser(expr: Expr) -> TokenStream {
 			}
 			if_expr.if_token.to_tokens(&mut ts);
 			UnsupportedReporter::fold_expr(*if_expr.cond).to_tokens(&mut ts);
-			let block_stmts = monadic_parse(&mut if_expr.then_branch.stmts.into_iter());
+			let mut block_stmts = monadic_parse(&mut if_expr.then_branch.stmts.into_iter());
+			if if_expr.else_branch.is_none() {
+				block_stmts.extend(quote! { .bind(|_| ret(()) ) });
+			}
 			ts.extend(quote_spanned! {if_expr.then_branch.brace_token.span =>
 				{
 					#block_stmts
@@ -119,6 +122,10 @@ fn monadic_expr_parser(expr: Expr) -> TokenStream {
 				let expr_ts = monadic_expr_parser(*expr);
 				ts.extend(quote! {
 					#e #expr_ts
+				});
+			} else {
+				ts.extend(quote! {
+					else { ret(()) }
 				});
 			}
 			ts
