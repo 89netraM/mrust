@@ -8,14 +8,17 @@ fn main() {
 }
 
 /// Logs the path of the function, and returns a value.
-#[monadic]
-fn log_test(a: bool) -> Logging<i32> {
+#[monadic(Logging)]
+fn log_test(a: bool) -> i32 {
 	Logging::log("Enter function")?;
 	if a {
 		Logging::log("Is statement A")?;
 	}?;
 	if !a {
 		Logging::log("If statement B")?;
+	}?;
+	for i in 0..3 {
+		Logging::log(format!("Logging iteration: {i}"))?;
 	}?;
 	ret(2)
 }
